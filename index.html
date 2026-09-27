@@ -83,5 +83,12 @@ if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;track=null;startBt
 if(statusEl.textContent.startsWith("Measuring"))statusEl.textContent="Stopped."}
 startBtn.onclick=start;stopBtn.onclick=stop;
 </script>
+    <script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
+}
+    </script>
 </body>
 </html>
