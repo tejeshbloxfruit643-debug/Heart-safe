@@ -1,0 +1,10 @@
+{
+  "name": "HeartSafe",
+  "short_name": "HeartSafe",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "description": "Educational camera-based pulse estimator",
+  "icons": []
+}
