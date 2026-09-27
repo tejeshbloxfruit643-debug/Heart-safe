@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>HeartSafe Mobile</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:#101827;color:#fff}
+main{max-width:520px;margin:auto;padding:22px 18px 35px}h1{margin:0;font-size:32px}.sub{opacity:.75;margin:5px 0 22px}
+.card{background:#182337;border-radius:20px;padding:18px;margin:14px 0}
+button{width:100%;border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:700;margin-top:10px}
+button:disabled{opacity:.45}video{width:100%;height:220px;object-fit:cover;border-radius:16px;background:#05080d}
+#status{font-weight:700;margin:10px 0}.bpm{font-size:64px;font-weight:800;text-align:center}.unit{text-align:center;opacity:.7}
+.quality{height:10px;border-radius:10px;background:#303c50;overflow:hidden;margin-top:10px}
+#qualityBar{height:100%;width:0%;background:#fff}.small{font-size:13px;opacity:.75;line-height:1.45}
+.hidden{display:none}.notice{padding:12px;border-radius:12px;background:#202d42;font-size:14px;line-height:1.4}
+#signal{width:100%;height:100px;background:#0c1320;border-radius:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>❤️ HeartSafe</h1>
+<div class="sub">Educational camera-based pulse estimator</div>
+<div class="card">
+<div class="notice">Place a fingertip gently over the <b>rear camera and flash</b>. Keep still and do not press hard.</div>
+<video id="video" autoplay playsinline muted></video>
+<div id="status">Ready.</div>
+<button id="start">Start measurement</button>
+<button id="stop" disabled>Stop</button>
+</div>
+<div class="card">
+<div class="bpm" id="bpm">--</div><div class="unit">estimated BPM</div>
+<div class="quality"><div id="qualityBar"></div></div>
+<div id="qualityText" class="small">Signal quality: --</div>
+</div>
+<div class="card hidden" id="result"><b>Result</b><p id="message"></p></div>
+<div class="card"><canvas id="signal" width="700" height="180"></canvas>
+<p class="small">Experimental PPG signal from camera brightness changes.</p></div>
+<div class="card small"><b>Important:</b> This is an educational prototype, not a medical device. A camera BPM estimate can be wrong, and BPM alone cannot determine a medical emergency. If someone is seriously unwell or you are worried about symptoms, get help from a trusted adult or local emergency/medical service.</div>
+</main>
+<script>
+const video=document.getElementById("video"),startBtn=document.getElementById("start"),stopBtn=document.getElementById("stop");
+const statusEl=document.getElementById("status"),bpmEl=document.getElementById("bpm"),qualityBar=document.getElementById("qualityBar");
+const qualityText=document.getElementById("qualityText"),result=document.getElementById("result"),message=document.getElementById("message");
+const cv=document.createElement("canvas");cv.width=160;cv.height=120;const ctx=cv.getContext("2d",{willReadFrequently:true});
+const graph=document.getElementById("signal"),gctx=graph.getContext("2d");
+let stream=null,track=null,raf=null,running=false,lastFrame=0,startTime=0,samples=[],times=[],values=[];
+
+function median(a){if(!a.length)return 0;let b=[...a].sort((x,y)=>x-y),m=Math.floor(b.length/2);return b.length%2?b[m]:(b[m-1]+b[m])/2}
+function quality(a){if(a.length<30)return 0;let n=a.slice(-90),m=n.reduce((x,y)=>x+y,0)/n.length;
+let s=Math.sqrt(n.reduce((x,y)=>x+(y-m)**2,0)/n.length);return Math.max(0,Math.min(100,s*25))}
+function draw(){gctx.clearRect(0,0,graph.width,graph.height);let a=values.slice(-180);if(a.length<2)return;
+let mn=Math.min(...a),mx=Math.max(...a),sp=Math.max(1,mx-mn);gctx.beginPath();
+a.forEach((v,i)=>{let x=i*(graph.width-1)/(a.length-1),y=graph.height-12-(v-mn)/sp*(graph.height-24);i?gctx.lineTo(x,y):gctx.moveTo(x,y)});
+gctx.strokeStyle="#fff";gctx.lineWidth=2;gctx.stroke()}
+function estimate(){
+if(samples.length<100)return;let n=samples.slice(-300),t=times.slice(-300),sig=[];
+for(let i=0;i<n.length;i++){let lo=Math.max(0,i-30),s=0;for(let j=lo;j<=i;j++)s+=n[j];sig.push(n[i]-s/(i-lo+1))}
+let sm=[];for(let i=0;i<sig.length;i++){let lo=Math.max(0,i-2),hi=Math.min(sig.length,i+3),s=0;for(let j=lo;j<hi;j++)s+=sig[j];sm.push(s/(hi-lo))}
+let mean=sm.reduce((a,b)=>a+b,0)/sm.length,sd=Math.sqrt(sm.reduce((a,b)=>a+(b-mean)**2,0)/sm.length),th=mean+sd*.45,pk=[];
+for(let i=2;i<sm.length-2;i++)if(sm[i]>th&&sm[i]>=sm[i-1]&&sm[i]>=sm[i+1]&&(!pk.length||t[i]-pk[pk.length-1]>350))pk.push(t[i]);
+if(pk.length>=3){let ints=[];for(let i=1;i<pk.length;i++){let d=pk[i]-pk[i-1];if(d>=350&&d<=1500)ints.push(d)}
+if(ints.length>=2){let bpm=Math.round(60000/median(ints));if(bpm>=35&&bpm<=220){bpmEl.textContent=bpm;
+message.textContent="A pulse estimate was obtained. Repeat the measurement if the signal is weak or the result seems unexpected.";result.classList.remove("hidden")}}}}
+async function start(){
+if(!navigator.mediaDevices?.getUserMedia){statusEl.textContent="Camera access is not supported in this browser.";return}
+try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:640},height:{ideal:480}},audio:false});
+video.srcObject=stream;track=stream.getVideoTracks()[0];try{let c=track.getCapabilities?.();if(c?.torch)await track.applyConstraints({advanced:[{torch:true}]})}catch(e){}
+running=true;startBtn.disabled=true;stopBtn.disabled=false;samples=[];times=[];values=[];startTime=performance.now();result.classList.add("hidden");bpmEl.textContent="--";
+statusEl.textContent="Measuring… keep your fingertip still.";raf=requestAnimationFrame(loop)}
+catch(e){statusEl.textContent="Camera permission was not granted. Allow camera access and try again."}}
+function loop(now){
+if(!running)return;if(now-lastFrame>=30){lastFrame=now;try{ctx.drawImage(video,0,0,cv.width,cv.height);
+let d=ctx.getImageData(40,30,80,60).data,r=0,g=0,b=0;for(let i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1];b+=d[i+2]}
+let c=d.length/4,v=(r/c)*.7+(g/c)*.2+(b/c)*.1;samples.push(v);times.push(now-startTime);values.push(v);
+if(samples.length>360){samples.shift();times.shift();values.shift()}let q=quality(samples);qualityBar.style.width=q+"%";
+qualityText.textContent="Signal quality: "+(q>65?"Good":q>30?"Fair":"Low")+" ("+Math.round(q)+"%)";draw();estimate()}catch(e){}}
+if(now-startTime>30000){statusEl.textContent="Measurement complete.";stop();return}raf=requestAnimationFrame(loop)}
+function stop(){running=false;if(raf)cancelAnimationFrame(raf);if(track){try{track.applyConstraints({advanced:[{torch:false}]})}catch(e){}}
+if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;track=null;startBtn.disabled=false;stopBtn.disabled=true;
+if(statusEl.textContent.startsWith("Measuring"))statusEl.textContent="Stopped."}
+startBtn.onclick=start;stopBtn.onclick=stop;
+</script>
+</body>
+</html>
